@@ -1,6 +1,7 @@
 package com.example.project_acadeamease1;
 
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -8,13 +9,14 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.GridView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 
-import com.example.project_acadeamease1.AddtoAlbum;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.firestore.CollectionReference;
 import com.google.firebase.firestore.EventListener;
@@ -26,15 +28,12 @@ import com.google.firebase.firestore.QuerySnapshot;
 import java.util.ArrayList;
 
 public class Tab_album extends Fragment {
-    FloatingActionButton fab;
+    private FloatingActionButton fab;
     private GridView gridView;
     private ArrayList<DataClass> dataList;
     private AlbumAdapter adapter;
 
-    // Request code for startActivityForResult
-    private static final int DELETE_IMAGE_REQUEST_CODE = 1;
-
-    String courseId;
+    private String courseId;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -53,24 +52,19 @@ public class Tab_album extends Fragment {
         adapter = new AlbumAdapter(requireContext(), dataList);
         gridView.setAdapter(adapter);
 
-        CollectionReference firestoreReference = Utility.getCollectionReferenceForAlbum(courseId);
-        firestoreReference.addSnapshotListener(new EventListener<QuerySnapshot>() {
+        // Set long click listener for item deletion
+        gridView.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
             @Override
-            public void onEvent(@Nullable QuerySnapshot querySnapshot, @Nullable FirebaseFirestoreException e) {
-                if (e != null) {
-                    Log.e("Tab_album", "Error fetching images", e);
-                    return;
-                }
-
-                dataList.clear();
-                for (QueryDocumentSnapshot document : querySnapshot) {
-                    DataClass dataClass = document.toObject(DataClass.class);
-                    dataList.add(dataClass);
-                }
-                adapter.notifyDataSetChanged();
+            public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                showDeleteConfirmationDialog(dataList.get(position));
+                return true;
             }
         });
 
+        // Fetch data from Firestore
+        fetchDataFromFirestore();
+
+        // Set click listener for fab to add new items
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -83,24 +77,60 @@ public class Tab_album extends Fragment {
         return view;
     }
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == DELETE_IMAGE_REQUEST_CODE && resultCode == getActivity().RESULT_OK) {
-            String deletedImageUrl = data.getStringExtra("deletedImageUrl");
-            if (deletedImageUrl != null) {
-                // Remove the deleted image from dataList and update UI
-                for (int i = 0; i < dataList.size(); i++) {
-                    if (dataList.get(i).getImageURL().equals(deletedImageUrl)) { // Accessing imageURL using getImageURL() method
-                        dataList.remove(i);
-                        adapter.notifyDataSetChanged();
-                        break;
-                    }
+    private void fetchDataFromFirestore() {
+        CollectionReference firestoreReference = Utility.getCollectionReferenceForAlbum(courseId);
+        firestoreReference.addSnapshotListener(new EventListener<QuerySnapshot>() {
+            @Override
+            public void onEvent(@Nullable QuerySnapshot querySnapshot, @Nullable FirebaseFirestoreException e) {
+                if (e != null) {
+                    Log.e("Tab_album", "Error fetching images", e);
+                    return;
                 }
+
+                dataList.clear(); // Clear the existing data
+                for (QueryDocumentSnapshot document : querySnapshot) {
+                    DataClass dataClass = document.toObject(DataClass.class);
+                    dataClass.setId(document.getId());
+                    dataList.add(dataClass);
+                }
+                adapter.notifyDataSetChanged(); // Notify adapter of data change
             }
-        }
+        });
     }
 
+    private void showDeleteConfirmationDialog(final DataClass itemToDelete) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
+        builder.setTitle("Delete Item");
+        builder.setMessage("Are you sure you want to delete this item?");
+
+        builder.setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                deleteItemFromFirestore(itemToDelete);
+            }
+        });
+
+        builder.setNegativeButton("No", null);
+        builder.show();
+    }
+
+    private void deleteItemFromFirestore(DataClass itemToDelete) {
+        FirebaseFirestore firestore = FirebaseFirestore.getInstance();
+        CollectionReference collectionReference = firestore.collection("Album");
+
+        // Get the document ID (unique identifier)
+        String documentId = itemToDelete.getId();
+
+        // Delete document from Firestore
+        collectionReference.document(documentId).delete()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d("Tab_album", "DocumentSnapshot successfully deleted from Firestore.");
+                    } else {
+                        Log.w("Tab_album", "Error deleting document from Firestore", task.getException());
+                    }
+                });
+    }
 
     private String getCourseId(Context context) {
         SharedPreferences sharedPreferences = context.getSharedPreferences("MyPrefs", Context.MODE_PRIVATE);
